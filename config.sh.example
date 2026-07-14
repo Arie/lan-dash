@@ -22,6 +22,14 @@ ADGUARD_URL=                       # e.g. http://192.168.1.1:8081
 ADGUARD_USER=admin
 ADGUARD_PASS=
 
+# ---- public (internet-facing) endpoint (optional) ---------------------------
+# Set to your public DNS name to have setup.sh install the extra packages for
+# it: acme-common + acme-acmesh (Let's Encrypt) and ddns-scripts (keep the
+# name pointed at a dynamic WAN IP). The uhttpd instance, WAN port-forwards,
+# acme/ddns config and the secrets-free web root remain manual — see the
+# "Public (internet-facing) variant" section in README.md.
+PUBLIC_DOMAIN=                     # e.g. lan.example.com
+
 # ---- network shape ---------------------------------------------------------
 WAN_IF=eth1                        # the REAL uplink device (check the default route!)
 WAN_DOWN_MAX=1000000000            # WAN gauge full-scale, bits/sec

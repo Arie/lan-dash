@@ -22,17 +22,24 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 : "${ALIAS_IP:?set ALIAS_IP in config.local.sh}"
 
 echo "== packages + prerequisites =="
-ssh "$ROUTER" 'sh -s' <<'EOF'
+ssh "$ROUTER" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" 'sh -s' <<'EOF'
 set -e
+# base: coreutils-sleep (2 Hz pinger) + ethtool (SFP+ module temps);
+# with PUBLIC_DOMAIN: acme (Let's Encrypt) + ddns-scripts (dynamic DNS)
+PKGS="coreutils-sleep ethtool"
+[ -n "$PUBLIC_DOMAIN" ] && PKGS="$PKGS acme-common acme-acmesh ddns-scripts"
 if command -v apk >/dev/null 2>&1; then
-    apk info -e coreutils-sleep >/dev/null 2>&1 || { apk update >/dev/null; apk add coreutils-sleep; }
-    command -v ethtool >/dev/null 2>&1 || apk add ethtool
+    missing=""
+    for p in $PKGS; do apk info -e "$p" >/dev/null 2>&1 || missing="$missing $p"; done
+    [ -n "$missing" ] && { apk update >/dev/null; apk add $missing; }
 elif command -v opkg >/dev/null 2>&1; then
-    opkg list-installed 2>/dev/null | grep -q '^coreutils-sleep ' || { opkg update >/dev/null; opkg install coreutils-sleep; }
-    command -v ethtool >/dev/null 2>&1 || opkg install ethtool
+    missing=""
+    for p in $PKGS; do opkg list-installed 2>/dev/null | grep -q "^$p " || missing="$missing $p"; done
+    [ -n "$missing" ] && { opkg update >/dev/null; opkg install $missing; }
 else
-    echo "WARNING: no apk/opkg found — install coreutils-sleep + ethtool yourself"
+    echo "WARNING: no apk/opkg found — install yourself: $PKGS"
 fi
+echo "ok: packages ($PKGS)"
 for c in ucode brctl uhttpd; do
     command -v "$c" >/dev/null 2>&1 || { echo "MISSING: $c"; exit 1; }
 done

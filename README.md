@@ -86,7 +86,9 @@ daemons, and registers everything in `/etc/sysupgrade.conf`.
 ## Public (internet-facing) variant
 
 The page supports a **public mode** that hides everything sensitive while
-keeping all the live stats: set `"public": true` in a *separate* `site.json`
+keeping all the live stats. Set `PUBLIC_DOMAIN` in `config.local.sh` so
+`setup.sh` also installs the packages for it (`acme-common`, `acme-acmesh`,
+`ddns-scripts`), then set `"public": true` in a *separate* `site.json`
 that contains no passwords, served from its own web root of symlinks:
 
 ```sh

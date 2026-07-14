@@ -453,6 +453,11 @@ document.addEventListener("click", (ev) => {
 /* site.json: passwords / addresses shown on the cards. Gitignored — lives
    only on the router, so the repo carries no secrets. Fetched once. */
 getJSON("site.json").then((s) => {
+  // public mode: LAN-only cards/links hidden, no credentials in this variant
+  if (s.public) {
+    document.body.classList.add("public");
+    if (s.mumble_remote) $("mumble-card").href = "mumble://" + s.mumble_remote;
+  }
   $("mumble-server").textContent = s.mumble_server || "—";
   $("mumble-pass").textContent = s.mumble_password || "—";
   $("mumble-remote").textContent = s.mumble_remote || "—";

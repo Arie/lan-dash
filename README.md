@@ -83,6 +83,33 @@ config to `/etc/luxe/config.sh`, adds the IP alias (live + uci, **no network
 reload**), creates the uhttpd instance (restarts only uhttpd), enables the
 daemons, and registers everything in `/etc/sysupgrade.conf`.
 
+## Public (internet-facing) variant
+
+The page supports a **public mode** that hides everything sensitive while
+keeping all the live stats: set `"public": true` in a *separate* `site.json`
+that contains no passwords, served from its own web root of symlinks:
+
+```sh
+mkdir www-public && cd www-public
+ln -s ../www/index.html ../www/app.js ../www/style.css ../www/data .
+printf '{"public": true, "mumble_remote": "lan.example.com"}\n' > site.json
+```
+
+Elements marked `lan-only` (credentials rows, Wi-Fi/speedtest cards,
+internal links) disappear; the Mumble card shows only the public address.
+Serve that root on a second uhttpd instance, port-forward WAN 80/443 to it,
+and get a Let's Encrypt cert with the `acme` + `acme-acmesh` packages
+(webroot HTTP-01 — note acme.sh appends `.well-known/acme-challenge` to its
+webroot, so symlink `www-public/.well-known/acme-challenge` →
+`/var/run/acme/challenge/.well-known/acme-challenge`, and add a
+`/etc/hotplug.d/acme/50-uhttpd` hook that reloads uhttpd on renewal).
+LAN clients keep the full dashboard: split-horizon DNS points the public
+name at the alias IP internally, where ports 80/443 serve the private root.
+**Pick the internal port for the public instance carefully** — check
+`netstat -tln` first; on our router AdGuard Home was squatting the obvious
+choice on a wildcard bind, which would have exposed its login page to the
+internet.
+
 ## Field notes (hard-won, all verified on a live party network)
 
 - `/proc/net/nf_conntrack` is a churning seq-file: occasional partial reads

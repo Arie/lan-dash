@@ -41,31 +41,31 @@
 </header>
 
 <section class="services">
-  <a class="card" href="mumble://mumble.luxe.lan" title="Opens in Mumble if installed">
+  <a class="card" id="mumble-card" href="mumble://mumble.luxe.lan" title="Opens in Mumble if installed">
     <h2>🎙 Mumble <small>voice chat</small></h2>
     <dl>
-      <dt>Server</dt><dd><code id="mumble-server">—</code> <small>(default port)</small></dd>
-      <dt>Password</dt><dd><code id="mumble-pass">—</code></dd>
+      <dt class="lan-only">Server</dt><dd class="lan-only"><code id="mumble-server">—</code> <small>(default port)</small></dd>
+      <dt class="lan-only">Password</dt><dd class="lan-only"><code id="mumble-pass">—</code></dd>
       <dt>Remote</dt><dd class="nowrap"><code id="mumble-remote">—</code> <button class="copy-btn" data-copy="" title="Copy address for remote friends">⧉</button></dd>
     </dl>
   </a>
-  <a class="card" href="http://speedtest.luxe.lan">
+  <a class="card lan-only" href="http://speedtest.luxe.lan">
     <h2>🚀 Speedtest <small>LAN link check</small></h2>
     <dl>
       <dt>URL</dt><dd><code>http://speedtest</code></dd>
       <dt>Note</dt><dd>measures <em>your cable/Wi-Fi to the router</em>, not the internet line</dd>
     </dl>
   </a>
-  <a class="card" href="http://cache.luxe.lan">
+  <a class="card" id="cache-card" href="http://cache.luxe.lan">
     <h2>📦 LanCache <small>game downloads</small></h2>
     <dl>
-      <dt>Dashboard</dt><dd><code>http://cache</code></dd>
+      <dt class="lan-only">Dashboard</dt><dd class="lan-only"><code>http://cache</code></dd>
       <dt>Cache used</dt><dd id="cache-used">—</dd>
     </dl>
     <div class="meter slim"><div class="meter-fill fill-cache" id="cache-bar"></div></div>
     <p class="card-note">Steam/Blizzard/WSUS download once, then at LAN speed for everyone. Just download normally — it's automatic.</p>
   </a>
-  <div class="card">
+  <div class="card lan-only">
     <h2>📶 Wi-Fi <small>same password everywhere</small></h2>
     <dl>
       <dt>SSIDs</dt><dd id="wifi-ssids">—</dd>
@@ -129,8 +129,8 @@
 </div>
 
 <footer>
-  LuxeLAN · router <code id="router-ip">—</code> · page refreshes itself ·
-  <a href="http://cache.luxe.lan">cache</a> · <a href="http://speedtest.luxe.lan">speedtest</a>
+  LuxeLAN <span class="lan-only">· router <code id="router-ip">—</code></span> · page refreshes itself<span class="lan-only"> ·
+  <a href="http://cache.luxe.lan">cache</a> · <a href="http://speedtest.luxe.lan">speedtest</a></span>
 </footer>
 
 <script src="app.js"></script>

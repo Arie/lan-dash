@@ -1,0 +1,8 @@
+{
+  "mumble_server": "mumble",
+  "mumble_password": "changeme",
+  "mumble_remote": "203.0.113.1:64738",
+  "wifi_ssids": "MySSID · MySSID-5G (WPA3)",
+  "wifi_password": "changeme",
+  "router_ip": "192.168.1.1"
+}

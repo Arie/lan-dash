@@ -1,0 +1,269 @@
+/* LuxeLAN start page — dark-only party theme.
+   Palette roles from the dataviz reference palette (dark column):
+   download=blue #3987e5 · upload=aqua #199e70 · validated CVD/contrast. */
+
+:root {
+  color-scheme: dark;
+  --page:       #0d0d0d;
+  --surface:    #1a1a19;
+  --surface-2:  #232322;
+  --ink:        #ffffff;
+  --ink-2:      #c3c2b7;
+  --muted:      #898781;
+  --hairline:   #2c2c2a;
+  --down:       #3987e5;   /* series: download */
+  --up:         #199e70;   /* series: upload   */
+  --track:      #26303c;   /* lighter step of the blue ramp family, as meter track */
+  --good:       #0ca30c;
+  --warning:    #fab219;
+  --serious:    #ec835a;
+  --critical:   #d03b3b;
+  --accent:     #3987e5;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0 auto; padding: 16px; max-width: 1200px;
+  background: var(--page); color: var(--ink-2);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1, h2, h3 { color: var(--ink); margin: 0 0 8px; font-weight: 600; }
+h2 small, h1 + .tagline, h2 .legend { font-weight: 400; color: var(--muted); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 4px;
+  padding: 1px 6px; font-size: 13px; color: var(--ink); user-select: all;
+}
+small { color: var(--muted); }
+.copy-btn {
+  font: 12px system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--accent); background: none;
+  border: 1px solid var(--hairline); border-radius: 4px;
+  padding: 1px 4px; cursor: pointer; flex: none;
+}
+.copy-btn:hover { border-color: var(--accent); }
+.copy-btn.copied { color: var(--good); border-color: var(--good); }
+
+/* ---------------- header ---------------- */
+header {
+  display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center;
+  padding: 16px; margin-bottom: 16px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+  position: relative;
+}
+.brand h1 { font-size: 30px; letter-spacing: 0.5px; margin: 0; }
+.brand h1 span { color: var(--accent); }
+.brand .tagline { margin: 0; }
+.wan-meters { flex: 1 1 260px; min-width: 240px; display: grid; gap: 8px; }
+.head-tiles { display: flex; gap: 12px; }
+.stale-badge {
+  position: absolute; top: 8px; right: 12px; font-size: 11px;
+  color: var(--warning); border: 1px solid var(--warning); border-radius: 4px; padding: 1px 6px;
+}
+
+/* ---------------- tiles ---------------- */
+.tile {
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 8px 14px; display: flex; flex-direction: column; min-width: 92px;
+}
+.tile-label { font-size: 12px; color: var(--muted); }
+.tile-value { font-size: 22px; font-weight: 600; color: var(--ink); }
+.tile-value .unit { font-size: 13px; font-weight: 400; color: var(--muted); }
+
+/* ---------------- meters ---------------- */
+.meter-block { display: grid; gap: 3px; }
+.meter-head { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: baseline; }
+.meter-head b { color: var(--ink); font-weight: 600; margin-left: auto; font-variant-numeric: tabular-nums; }
+.meter {
+  height: 10px; background: var(--track); border-radius: 5px; overflow: hidden;
+}
+.meter.slim { height: 7px; }
+.meter-fill { height: 100%; width: 0; border-radius: 0 4px 4px 0; transition: width .6s ease; }
+.fill-down { background: var(--down); }
+.fill-up { background: var(--up); }
+.fill-cache { background: var(--down); }
+.fill-cache.warn { background: var(--warning); }
+.fill-cache.crit { background: var(--critical); }
+
+/* ---------------- ping graph ---------------- */
+/* full-width row of its own at the bottom of the header */
+.ping-block { flex: 1 1 100%; order: 10; display: grid; gap: 2px; }
+.ping-block svg {
+  width: 100%; height: 160px; display: block;
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 6px;
+}
+.ping-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ping-loss-bar { stroke: var(--critical); stroke-width: 2; }
+.ping-wrap { position: relative; }
+.ping-cross {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: var(--muted); pointer-events: none;
+}
+.ping-tip {
+  position: absolute; top: -4px; transform: translateY(-100%);
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 4px;
+  padding: 2px 7px; font-size: 11px; color: var(--ink);
+  pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums; z-index: 5;
+}
+.ping-tip.lost { color: var(--critical); border-color: var(--critical); }
+.ping-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+.ping-stats { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.loss-badge { color: var(--critical); font-size: 11px; border: 1px solid var(--critical); border-radius: 4px; padding: 0 4px; }
+
+/* legend keys: colored mark beside text, text stays in ink tokens */
+.key {
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  margin-right: 4px; vertical-align: baseline;
+}
+.key-down { background: var(--down); }
+.key-up { background: var(--up); }
+.legend { margin-left: 10px; }
+.legend .key { margin-left: 8px; }
+
+/* ---------------- services ---------------- */
+.services {
+  display: grid; gap: 12px; margin-bottom: 16px;
+  grid-template-columns: repeat(2, 1fr);   /* 2x2 card grid */
+}
+@media (max-width: 640px) {
+  .services { grid-template-columns: 1fr; }
+}
+.card {
+  display: block; background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: 12px; padding: 14px 16px; color: var(--ink-2);
+}
+.card:hover { border-color: var(--muted); text-decoration: none; }
+.card h2 { font-size: 18px; }
+.card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 14px; }
+.card dt { color: var(--muted); }
+/* min-width:0 + anywhere: long atomic tokens (a full ip:port address) must
+   not widen the grid past a phone viewport */
+.card dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.card-note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.card .meter { margin-top: 8px; }
+
+/* ---------------- panels ---------------- */
+.panel {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 16px;
+}
+.panel h2 { font-size: 18px; }
+.panel h3 { font-size: 14px; margin-top: 14px; color: var(--ink-2); }
+.two-col { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.empty { color: var(--muted); font-size: 14px; }
+
+/* ---------------- hosts (who's hogging) ---------------- */
+.hosts { display: grid; gap: 6px; }
+.host-row {
+  display: grid; align-items: center; gap: 2px 12px;
+  grid-template-columns: minmax(140px, 200px) 1fr minmax(150px, 170px) 64px;
+  padding: 5px 8px; border-radius: 8px;
+}
+.host-row:nth-child(odd) { background: var(--surface-2); }
+.host-name { color: var(--ink); font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-name small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+.host-bars { display: grid; gap: 2px; }
+.host-bar { height: 8px; border-radius: 0 4px 4px 0; min-width: 0; transition: width .6s ease; }
+.host-bar.down { background: var(--down); }
+.host-bar.up { background: var(--up); }
+.host-rates { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; white-space: nowrap; }
+.host-rates b { color: var(--ink); font-weight: 600; }
+.host-rates small { font-size: 11px; color: var(--muted); }
+.host-conns { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nowrap { white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+@media (max-width: 560px) {
+  .host-row { grid-template-columns: 1fr 90px; }
+  .host-bars { grid-column: 1 / -1; }
+  .host-conns { display: none; }
+}
+
+/* ---------------- health ---------------- */
+.health-tiles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.cpus { display: grid; gap: 5px; margin-bottom: 12px; }
+.cpu-row { display: grid; grid-template-columns: 52px 1fr 42px; gap: 10px; align-items: center; font-size: 12px; }
+.cpu-row .lbl { color: var(--muted); }
+.cpu-row .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.proc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.proc-table td { padding: 3px 8px 3px 0; border-top: 1px solid var(--hairline); }
+.proc-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.proc-table td.cmd { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink); word-break: break-all; }
+.temp-good { color: var(--good); }
+.temp-warning { color: var(--warning); }
+.temp-serious { color: var(--serious); }
+
+/* ---------------- wifi ---------------- */
+.aps { display: grid; gap: 12px 32px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.col-stack { display: grid; gap: 0; align-content: start; }
+.ap { display: grid; gap: 5px; }
+.ap-name { color: var(--ink); font-weight: 600; font-size: 14px; }
+.ap-name small { font-weight: 400; color: var(--muted); }
+.radio-row { display: grid; grid-template-columns: 96px 1fr 46px 64px; gap: 10px; align-items: center; font-size: 12px; }
+.radio-row .lbl { color: var(--muted); white-space: nowrap; }
+.radio-row .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.radio-row .sta { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meter-fill.warn { background: var(--warning); }
+.meter-fill.crit { background: var(--critical); }
+.wifi-clients { display: grid; gap: 4px; }
+.wc-row {
+  display: grid; grid-template-columns: minmax(110px, 1fr) auto 76px 72px;
+  gap: 10px; align-items: center; padding: 4px 8px; border-radius: 8px; font-size: 13px;
+}
+.wc-chips { display: flex; gap: 4px; }
+.wc-row:nth-child(odd) { background: var(--surface-2); }
+.wc-name { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-name small { display: block; font-weight: 400; font-size: 10px; color: var(--muted); }
+.chip {
+  font-size: 11px; color: var(--ink-2); background: var(--page);
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 0 5px; white-space: nowrap;
+}
+.wc-rate, .wc-signal { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wc-rate { color: var(--ink-2); }
+@media (max-width: 560px) {
+  .wc-row { grid-template-columns: 1fr 70px 66px; }
+  .wc-row .wc-chips { display: none; }
+  .radio-row { grid-template-columns: 80px 1fr 40px 56px; }
+}
+
+/* ---------------- topology ---------------- */
+.topo { font-size: 13px; }
+.topo-head-root { color: var(--ink); font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.topo-node { margin: 6px 0; }
+.topo-children {
+  margin-left: 10px; padding-left: 14px; border-left: 1px solid var(--hairline);
+}
+.topo-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+.topo-head b { color: var(--ink); font-weight: 600; }
+.topo-head small { color: var(--muted); white-space: nowrap; }
+/* one client per line, indented under the node head */
+.topo-devs {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  margin: 2px 0 4px 10px; padding-left: 14px; border-left: 1px solid var(--hairline);
+}
+.dev {
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 5px;
+  padding: 1px 7px; font-size: 12px; color: var(--ink-2); white-space: nowrap;
+}
+.dev b { color: var(--down); font-weight: 600; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ---------------- downloads ---------------- */
+.downloads { display: grid; gap: 6px; }
+.dl-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
+  padding: 6px 8px; border-radius: 8px; font-size: 13px;
+}
+.dl-row:nth-child(odd) { background: var(--surface-2); }
+.dl-game { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-live {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--good); margin-right: 5px; animation: pulse 1.5s infinite;
+}
+@keyframes pulse { 50% { opacity: 0.35; } }
+.dl-meta { color: var(--muted); font-size: 12px; }
+.dl-size { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.dl-hit { text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+footer {
+  text-align: center; color: var(--muted); font-size: 12px; padding: 12px 0 20px;
+}

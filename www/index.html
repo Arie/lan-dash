@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LuxeLAN</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Luxe<span>LAN</span></h1>
+    <p class="tagline">party network · <code>luxe.lan</code></p>
+  </div>
+  <div class="wan-meters" id="wan-meters">
+    <div class="meter-block">
+      <div class="meter-head"><span class="key key-down"></span>Internet ↓ download <b id="wan-down">—</b></div>
+      <div class="meter"><div class="meter-fill fill-down" id="wan-down-bar"></div></div>
+    </div>
+    <div class="meter-block">
+      <div class="meter-head"><span class="key key-up"></span>Internet ↑ upload <b id="wan-up">—</b></div>
+      <div class="meter"><div class="meter-fill fill-up" id="wan-up-bar"></div></div>
+    </div>
+  </div>
+  <div class="ping-block">
+    <div class="meter-head">Internet latency <span id="ping-loss" class="loss-badge" hidden></span> <b id="ping-rtt">—</b></div>
+    <div class="ping-wrap" id="ping-wrap">
+      <svg id="ping-graph" viewBox="0 0 240 44" preserveAspectRatio="none" aria-label="ping over the last 2 minutes"></svg>
+      <div class="ping-cross" id="ping-cross" hidden></div>
+      <div class="ping-tip" id="ping-tip" hidden></div>
+    </div>
+    <div class="ping-foot"><span>2 min ago</span><span class="ping-stats" id="ping-stats"></span><span>now</span></div>
+  </div>
+  <div class="head-tiles">
+    <div class="tile"><span class="tile-label">Connections</span><span class="tile-value" id="conns">—</span></div>
+    <div class="tile"><span class="tile-label">Router uptime</span><span class="tile-value" id="uptime">—</span></div>
+  </div>
+  <span class="stale-badge" id="stale" hidden>stale data</span>
+</header>
+
+<section class="services">
+  <a class="card" href="mumble://mumble.luxe.lan" title="Opens in Mumble if installed">
+    <h2>🎙 Mumble <small>voice chat</small></h2>
+    <dl>
+      <dt>Server</dt><dd><code id="mumble-server">—</code> <small>(default port)</small></dd>
+      <dt>Password</dt><dd><code id="mumble-pass">—</code></dd>
+      <dt>Remote</dt><dd class="nowrap"><code id="mumble-remote">—</code> <button class="copy-btn" data-copy="" title="Copy address for remote friends">⧉</button></dd>
+    </dl>
+  </a>
+  <a class="card" href="http://speedtest.luxe.lan">
+    <h2>🚀 Speedtest <small>LAN link check</small></h2>
+    <dl>
+      <dt>URL</dt><dd><code>http://speedtest</code></dd>
+      <dt>Note</dt><dd>measures <em>your cable/Wi-Fi to the router</em>, not the internet line</dd>
+    </dl>
+  </a>
+  <a class="card" href="http://cache.luxe.lan">
+    <h2>📦 LanCache <small>game downloads</small></h2>
+    <dl>
+      <dt>Dashboard</dt><dd><code>http://cache</code></dd>
+      <dt>Cache used</dt><dd id="cache-used">—</dd>
+    </dl>
+    <div class="meter slim"><div class="meter-fill fill-cache" id="cache-bar"></div></div>
+    <p class="card-note">Steam/Blizzard/WSUS download once, then at LAN speed for everyone. Just download normally — it's automatic.</p>
+  </a>
+  <div class="card">
+    <h2>📶 Wi-Fi <small>same password everywhere</small></h2>
+    <dl>
+      <dt>SSIDs</dt><dd id="wifi-ssids">—</dd>
+      <dt>Password</dt><dd><code id="wifi-pass">—</code></dd>
+    </dl>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Who's hogging <small>internet + lancache traffic per device, busiest first (↓+↑ combined)</small>
+    <span class="legend"><span class="key key-down"></span>download <span class="key key-up"></span>upload</span></h2>
+  <div id="hosts" class="hosts"><p class="empty">waiting for data…</p></div>
+</section>
+
+<section class="panel">
+  <h2>Topology <small>who's plugged in where — live from the switch MAC tables</small></h2>
+  <div id="topo" class="topo"><p class="empty">waiting for data…</p></div>
+</section>
+
+<section class="panel">
+  <h2>Wi-Fi weather <small>airtime busy per radio — high = crowded air</small></h2>
+  <div id="aps" class="aps"><p class="empty">waiting for data…</p></div>
+  <p class="card-note" id="poe"></p>
+</section>
+
+<div class="two-col">
+  <section class="panel">
+    <h2>Wireless clients <small id="wifi-counts"></small></h2>
+    <div id="wifi-clients" class="wifi-clients"><p class="empty">waiting for data…</p></div>
+  </section>
+
+  <div class="col-stack">
+  <section class="panel">
+    <h2>Router health <small>GoWin R86S · the box running everything</small></h2>
+    <div class="health-tiles">
+      <div class="tile"><span class="tile-label">CPU temp</span><span class="tile-value" id="temp-cpu">—</span></div>
+      <div class="tile"><span class="tile-label">NVMe temp</span><span class="tile-value" id="temp-nvme">—</span></div>
+      <div class="tile" title="SFP+ module in the 10G uplink to the MikroTik"><span class="tile-label">SFP+ temp</span><span class="tile-value" id="temp-sfp">—</span></div>
+      <div class="tile" title="Mellanox ConnectX ASIC"><span class="tile-label">10G NIC</span><span class="tile-value" id="temp-nic">—</span></div>
+      <div class="tile"><span class="tile-label">Load</span><span class="tile-value" id="load">—</span></div>
+      <div class="tile"><span class="tile-label">Tasks</span><span class="tile-value" id="procs">—</span></div>
+    </div>
+    <div id="cpus" class="cpus"></div>
+    <div class="meter-block">
+      <div class="meter-head">RAM <b id="mem">—</b></div>
+      <div class="meter slim"><div class="meter-fill fill-down" id="mem-bar"></div></div>
+    </div>
+    <div class="meter-block">
+      <div class="meter-head">NVMe disk <b id="disk">—</b></div>
+      <div class="meter slim"><div class="meter-fill fill-cache" id="disk-bar"></div></div>
+    </div>
+    <h3>Top processes</h3>
+    <table class="proc-table"><tbody id="top-procs"></tbody></table>
+  </section>
+
+  <section class="panel">
+    <h2>Cache downloads <small>latest via <a href="http://cache.luxe.lan">lancache</a></small></h2>
+    <div id="downloads" class="downloads"><p class="empty">waiting for data…</p></div>
+  </section>
+  </div>
+</div>
+
+<footer>
+  LuxeLAN · router <code id="router-ip">—</code> · page refreshes itself ·
+  <a href="http://cache.luxe.lan">cache</a> · <a href="http://speedtest.luxe.lan">speedtest</a>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

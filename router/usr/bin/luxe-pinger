@@ -1,0 +1,56 @@
+#!/bin/sh
+# luxe-pinger — WAN latency ring buffer for the start page's ping graph.
+# Adapted from pixel-badge-apps' traffic-pinger. 2 samples/sec, ring of 240
+# (~2 min), -1 = loss/timeout, newest last. Writes /tmp/luxe/ping.json after
+# every sample so the page can poll it at 500 ms independently of the 3 s
+# net.json cycle.
+#
+# Sub-second pacing needs GNU sleep (apk package `coreutils-sleep`, installed
+# 2026-07-14; does NOT survive sysupgrade — reinstall it, or this script
+# gracefully drops to 1 sample/sec on busybox). NOTE: it must be invoked by
+# explicit path — OpenWrt's ash runs `sleep` as a builtin applet (standalone
+# mode), bypassing the /bin/sleep alternative symlink.
+#
+# Ring lives in /tmp/luxe-raw — NOT the served /tmp/luxe directory.
+# POSIX sh (busybox ash); managed by /etc/init.d/luxe-pinger (procd).
+
+[ -f /etc/luxe/config.sh ] && . /etc/luxe/config.sh
+WAN_IF="${WAN_IF:-eth1}"           # the REAL uplink — check the default route
+TARGET="${PING_TARGET:-1.1.1.1}"
+RING=/tmp/luxe-raw/ping.ring
+OUT=/tmp/luxe/ping.json
+
+mkdir -p /tmp/luxe-raw /tmp/luxe
+
+# GNU sleep (fractional) if present, else 1 Hz on busybox
+if /bin/sleep 0.1 2>/dev/null; then
+    INTERVAL=0.5; RATE=2; HIST=240
+else
+    INTERVAL=1; RATE=1; HIST=120
+    logger -t luxe-pinger "no fractional sleep (coreutils-sleep gone?) — 1 sample/sec"
+fi
+
+while :; do
+    out=$(ping -4 -I "$WAN_IF" -c1 -W1 "$TARGET" 2>/dev/null)
+    rtt=$(printf '%s\n' "$out" | sed -n 's/.*time=\([0-9.]*\).*/\1/p' | head -1)
+    [ -n "$rtt" ] || rtt=-1
+    existing=""
+    [ -f "$RING" ] && existing=$(cat "$RING")
+    # shellcheck disable=SC2086
+    set -- $existing
+    while [ "$#" -ge "$HIST" ]; do shift; done
+    printf '%s\n' "$* $rtt" > "$RING"
+
+    awk -v ts="$(date +%s)" -v rate="$RATE" '{
+        n = split($0, a, " "); lost = 0; last = -1; arr = "["
+        for (i = 1; i <= n; i++) {
+            if (i > 1) arr = arr ","
+            arr = arr a[i]
+            if (a[i] == -1) lost++; else last = a[i]
+        }
+        printf "{\"ts\":%s,\"rate\":%s,\"samples\":%s],\"rtt_ms\":%s,\"loss_pct\":%d}\n", \
+               ts, rate, arr, last, (n ? int(lost * 100 / n) : 0)
+    }' "$RING" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+
+    /bin/sleep "$INTERVAL"
+done

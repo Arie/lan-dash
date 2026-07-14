@@ -1,0 +1,4 @@
+config.local.sh
+www/site.json
+www/data/
+.DS_Store

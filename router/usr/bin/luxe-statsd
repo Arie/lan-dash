@@ -1,0 +1,426 @@
+#!/bin/sh
+# luxe-statsd — stats collector for the LuxeLAN start page (http://luxe).
+#
+# Every INTERVAL seconds, samples conntrack / /proc / sensors and writes
+# ready-to-serve JSON snapshots into /tmp/luxe/ via atomic rename. uhttpd
+# (instance "luxe" on a dedicated LAN IP alias) serves them via a symlink
+# www/data -> /tmp/luxe, so NOTHING computes in the HTTP request path —
+# 70 guests polling costs the router only file reads.
+#
+# Outputs:
+#   /tmp/luxe/net.json    per-LAN-IP down/up rates + conns, WAN rates, total conns
+#   /tmp/luxe/sys.json    CPU per-core, load, mem, temps, disk, top processes
+#   /tmp/luxe/cache.json  lancache usage + recent downloads (via manager API)
+#
+# Per-IP rates come from /proc/net/nf_conntrack byte counters (acct=1),
+# summed per LAN client and delta'd between samples. Flows that expire
+# between samples lose their tail — slight undercount, fine for "who is
+# hogging". POSIX sh (busybox ash) + awk, no extra packages.
+
+STATE=/tmp/luxe
+INTERVAL=3
+CACHE_EVERY=5                # sample lancache every N loops (~15 s)
+LEASES=/tmp/dhcp.leases
+
+# Site config (secrets + network shape) — see config.sh.example in the repo.
+# Missing values fall back to safe defaults; samplers without credentials
+# publish nothing instead of failing.
+[ -f /etc/luxe/config.sh ] && . /etc/luxe/config.sh
+WAN_IF="${WAN_IF:-eth1}"
+WAN_DOWN_MAX="${WAN_DOWN_MAX:-1000000000}"
+WAN_UP_MAX="${WAN_UP_MAX:-1000000000}"
+LAN_PREFIX="${LAN_PREFIX:-192.168.1.}"   # matched with index()==1, no regex
+LAN_CLIENT_MIN="${LAN_CLIENT_MIN:-11}"
+NVME_MOUNT="${NVME_MOUNT:-/}"
+PING_TARGET="${PING_TARGET:-1.1.1.1}"
+LC_CONTAINER="${LC_CONTAINER:-lancache}"
+LC_MANAGER_CONTAINER="${LC_MANAGER_CONTAINER:-lancache-manager}"
+LC_MANAGER_URL="${LC_MANAGER_URL:-}"
+UNIFI_CONTAINER="${UNIFI_CONTAINER:-unifi-network-application}"
+UNIFI_URL="${UNIFI_URL:-https://localhost:8443}"
+UNIFI_USER="${UNIFI_USER:-admin}"
+UNIFI_PASS="${UNIFI_PASS:-}"
+MT_HOST="${MT_HOST:-}"
+MT_USER="${MT_USER:-admin}"
+MT_PASS="${MT_PASS:-}"
+SFP_IF="${SFP_IF:-}"
+# NOT ${VAR:-{}} — ash ends the expansion at the FIRST '}', which appends a
+# stray brace to a set value and corrupts the JSON
+[ -n "$SWITCH_LABELS_JSON" ] || SWITCH_LABELS_JSON='{}'
+[ -n "$CASCADES_JSON" ] || CASCADES_JSON='{}'
+CRS_SELF_PREFIX="${CRS_SELF_PREFIX:-}"
+
+mkdir -p "$STATE"
+
+# Resolve hwmon paths by name — indexes can change across boots.
+resolve_hwmon() {
+    CPU_TEMP=""; NVME_TEMP=""; MLX_TEMPS=""
+    for h in /sys/class/hwmon/hwmon*; do
+        [ -f "$h/name" ] || continue
+        case "$(cat "$h/name")" in
+            coretemp) [ -f "$h/temp1_input" ] && CPU_TEMP="$h/temp1_input" ;;
+            nvme)     [ -f "$h/temp1_input" ] && NVME_TEMP="$h/temp1_input" ;;
+            mlx5)     [ -f "$h/temp1_input" ] && MLX_TEMPS="$MLX_TEMPS $h/temp1_input" ;;
+        esac
+    done
+}
+resolve_hwmon
+
+# ---------------------------------------------------------------- net.json
+# One pass: leases (names) + previous per-IP sums + conntrack -> rates JSON.
+sample_net() {
+    now=$(date +%s)
+
+    # WAN rate from /proc/net/dev deltas (exact iface match — "eth1.300" is
+    # a substring of "ifb4eth1.300", the SQM ingress shadow device)
+    set -- $(awk -v ifc="$WAN_IF:" '$1 == ifc { $1 = ""; print }' /proc/net/dev)
+    wrx=${1:-0}; wtx=${9:-0}
+    wdown=0; wup=0
+    if [ -f "$STATE/wan.prev" ]; then
+        read -r pt prx ptx < "$STATE/wan.prev"
+        dt=$((now - pt)); [ "$dt" -le 0 ] && dt=1
+        [ "$wrx" -ge "$prx" ] && wdown=$(( (wrx - prx) * 8 / dt ))
+        [ "$wtx" -ge "$ptx" ] && wup=$(( (wtx - ptx) * 8 / dt ))
+    fi
+    echo "$now $wrx $wtx" > "$STATE/wan.prev"
+
+    conns=$(wc -l < /proc/net/nf_conntrack)
+    # (ping data is published separately by luxe-pinger as ping.json, 2 Hz)
+
+    # Aggregate conntrack per LAN client -> "ip up_bytes down_bytes conns"
+    awk -v lan="$LAN_PREFIX" -v cmin="$LAN_CLIENT_MIN" '
+    {
+        os = ""; od = ""; b1 = -1; b2 = -1
+        for (i = 1; i <= NF; i++) {
+            if      ($i ~ /^src=/)   { if (os == "") os = substr($i, 5) }
+            else if ($i ~ /^dst=/)   { if (od == "") od = substr($i, 5) }
+            else if ($i ~ /^bytes=/) { if (b1 < 0) b1 = substr($i, 7) + 0
+                                       else if (b2 < 0) b2 = substr($i, 7) + 0 }
+        }
+        if (b1 < 0) b1 = 0
+        if (b2 < 0) b2 = 0
+        # Client = the LAN-side endpoint outside the router alias range .1-.10.
+        ip = ""
+        if (index(os, lan) == 1) { split(os, o, "."); if (o[4] + 0 >= cmin) { ip = os; up[ip] += b1; down[ip] += b2 } }
+        if (ip == "" && index(od, lan) == 1) { split(od, o, "."); if (o[4] + 0 >= cmin) { ip = od; up[ip] += b2; down[ip] += b1 } }
+        if (ip != "") nconn[ip]++
+    }
+    END { for (ip in nconn) print ip, up[ip] + 0, down[ip] + 0, nconn[ip] }
+    ' /proc/net/nf_conntrack > "$STATE/ipsums.now"
+
+    # nf_conntrack is a churning seq-file; an occasional partial read halves
+    # the per-IP sums and the negative-delta clamp would zero EVERY host for
+    # a tick. If this sample saw far fewer hosts than the last one, drop the
+    # tick: keep the previous net.json and previous sums.
+    newn=$(wc -l < "$STATE/ipsums.now")
+    prevn=$(grep -vc '^#' "$STATE/ipsums.prev" 2>/dev/null) || prevn=0
+    if [ "$prevn" -gt 20 ] && [ "$newn" -lt $((prevn / 2)) ]; then
+        return 0
+    fi
+    # First cycle after a (re)start: no sums to delta against. If a previous
+    # net.json is still around (survives restarts, /tmp lives on), keep
+    # serving it instead of publishing one tick of zeros.
+    if [ "$prevn" -eq 0 ] && [ -f "$STATE/net.json" ]; then
+        { echo "#ts $now"; cat "$STATE/ipsums.now"; } > "$STATE/ipsums.prev"
+        return 0
+    fi
+
+    # Client connections = flows involving a LAN client, matching the list
+    # below (the raw table also holds docker-internal + inbound noise).
+    lanconns=$(awk '{ s += $4 } END { print s + 0 }' "$STATE/ipsums.now")
+
+    # Deltas vs previous sums + lease names -> host JSON lines "rate ip {…}".
+    # conntrack byte sums can DROP: flows expire, and a partial read of the
+    # churning seq-file sheds the table's tail. A negative delta is therefore
+    # "unreliable this tick", not "idle" — hold the host's previous rate
+    # (rates.prev) instead of clamping to 0, which used to zero everyone.
+    awk -v now="$now" -v prevfile="$STATE/ipsums.prev" -v leases="$LEASES" \
+        -v prevrates="$STATE/rates.prev" -v ratesout="$STATE/rates.prev.tmp" '
+    BEGIN {
+        pt = 0
+        while ((getline line < prevfile) > 0) {
+            n = split(line, f, " ")
+            if (f[1] == "#ts") { pt = f[2]; continue }
+            pup[f[1]] = f[2]; pdown[f[1]] = f[3]
+        }
+        close(prevfile)
+        while ((getline line < prevrates) > 0) {
+            n = split(line, f, " ")
+            prd[f[1]] = f[2]; pru[f[1]] = f[3]
+        }
+        close(prevrates)
+        while ((getline line < leases) > 0) {
+            n = split(line, f, " ")
+            if (n >= 4 && f[4] != "*") {
+                gsub(/[^A-Za-z0-9._-]/, "", f[4])
+                name[f[3]] = f[4]
+            }
+        }
+        close(leases)
+        dt = now - pt; if (dt <= 0 || pt == 0) dt = 0
+    }
+    {
+        ip = $1; u = $2; d = $3; c = $4
+        ur = 0; dr = 0
+        if (dt > 0 && ip in pup) {
+            du = u - pup[ip]; dd = d - pdown[ip]
+            ur = (du >= 0) ? int(du * 8 / dt) : pru[ip] + 0
+            dr = (dd >= 0) ? int(dd * 8 / dt) : prd[ip] + 0
+        }
+        print ip, dr, ur > ratesout
+        printf "%d %s {\"ip\":\"%s\",\"name\":\"%s\",\"down_bps\":%d,\"up_bps\":%d,\"conns\":%d}\n", \
+               dr + ur, ip, ip, name[ip], dr, ur, c
+    }
+    ' "$STATE/ipsums.now" | sort -rn | head -64 > "$STATE/hosts.lines"
+    mv "$STATE/rates.prev.tmp" "$STATE/rates.prev" 2>/dev/null
+
+    { echo "#ts $now"; cat "$STATE/ipsums.now"; } > "$STATE/ipsums.prev"
+
+    awk -v now="$now" -v conns="$conns" -v lanconns="$lanconns" \
+        -v wd="$wdown" -v wu="$wup" -v wdm="$WAN_DOWN_MAX" -v wum="$WAN_UP_MAX" '
+    BEGIN {
+        printf "{\"ts\":%s,\"conns\":%s,\"conns_lan\":%s,", now, conns, lanconns
+        printf "\"wan\":{\"down_bps\":%s,\"up_bps\":%s,\"down_max\":%s,\"up_max\":%s},", wd, wu, wdm, wum
+        printf "\"hosts\":["
+    }
+    { sub(/^[0-9]+ [0-9.]+ /, ""); printf "%s%s", (NR > 1 ? "," : ""), $0 }
+    END { printf "]}\n" }
+    ' "$STATE/hosts.lines" > "$STATE/net.json.tmp" && mv "$STATE/net.json.tmp" "$STATE/net.json"
+}
+
+# ---------------------------------------------------------------- sys.json
+sample_sys() {
+    now=$(date +%s)
+
+    # CPU busy% per entry from /proc/stat deltas
+    grep '^cpu' /proc/stat > "$STATE/cpu.now"
+    cpu_json=$(awk -v prevfile="$STATE/cpu.prev" '
+    BEGIN {
+        while ((getline line < prevfile) > 0) {
+            split(line, f, " ")
+            pb[f[1]] = f[2] + f[3] + f[4] + f[7] + f[8] + f[9]
+            pt[f[1]] = pb[f[1]] + f[5] + f[6]
+        }
+        close(prevfile)
+    }
+    {
+        busy = $2 + $3 + $4 + $7 + $8 + $9
+        total = busy + $5 + $6
+        pct = 0
+        if (($1 in pt) && total > pt[$1])
+            pct = int(100 * (busy - pb[$1]) / (total - pt[$1]))
+        out = out sprintf("%s{\"id\":\"%s\",\"pct\":%d}", (out ? "," : ""), $1, pct)
+    }
+    END { printf "[%s]", out }
+    ' "$STATE/cpu.now")
+    cp "$STATE/cpu.now" "$STATE/cpu.prev"
+
+    set -- $(cat /proc/loadavg)
+    load1=$1; load5=$2; load15=$3; procs="${4#*/}"
+
+    memtotal=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+    memavail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+
+    [ -f "$CPU_TEMP" ] || resolve_hwmon
+    cputemp=$(cat "$CPU_TEMP" 2>/dev/null || echo 0)
+    nvmetemp=$(cat "$NVME_TEMP" 2>/dev/null || echo 0)
+
+    set -- $(df -k "$NVME_MOUNT" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $2, $3, $5}')
+    dtotal=${1:-0}; dused=${2:-0}; dpct=${3:-0}
+
+    uptime=$(awk '{print int($1)}' /proc/uptime)
+
+    # Top processes by CPU. busybox top sorts by %CPU; VSZ/%VSZ columns can
+    # merge on huge values, so take %CPU as the LAST n% field on the line.
+    procs_json=$(top -bn1 2>/dev/null | awk '
+    /^ *PID/ { hdr = 1; next }
+    hdr && NF >= 7 {
+        cpuidx = 0
+        for (i = 4; i < NF; i++) if ($i ~ /^[0-9]+%$/) cpuidx = i
+        if (!cpuidx) next
+        cpu = substr($cpuidx, 1, length($cpuidx) - 1) + 0
+        cmd = $(cpuidx + 1)
+        if (cmd == "top" || cmd == "awk") next
+        gsub(/[^A-Za-z0-9 ._\/\[\]:-]/, "", cmd)
+        if (length(cmd) > 32) cmd = substr(cmd, 1, 32)
+        out = out sprintf("%s{\"pid\":%d,\"user\":\"%s\",\"cpu\":%d,\"cmd\":\"%s\"}", \
+                          (out ? "," : ""), $1, $3, cpu, cmd)
+        if (++shown >= 6) exit
+    }
+    END { printf "[%s]", out }')
+
+    cat > "$STATE/sys.json.tmp" <<EOF
+{"ts":$now,"cpus":$cpu_json,"load":[$load1,$load5,$load15],"procs":$procs,
+"mem":{"total_kb":$memtotal,"avail_kb":$memavail},
+"temp":{"cpu_mc":$cputemp,"nvme_mc":$nvmetemp},
+"disk":{"total_kb":$dtotal,"used_kb":$dused,"pct":$dpct},
+"uptime":$uptime,"top":$procs_json}
+EOF
+    mv "$STATE/sys.json.tmp" "$STATE/sys.json"
+}
+
+# -------------------------------------------------------------- cache.json
+# Talks to LanCache Manager via curl inside the lancache container (router
+# busybox has no curl; host-published ports are unreachable from the host —
+# Golden Rule 2 fallout). Session cookie kept in the container's /tmp.
+JAR=/tmp/luxe-lm.cookie
+lm_curl() {
+    # no `timeout` in this busybox — curl -m 6 is the only watchdog
+    docker exec "$LC_CONTAINER" curl -s -m 6 -b "$JAR" "$LC_MANAGER_URL$1" 2>/dev/null
+}
+lm_login() {
+    key=$(docker exec "$LC_MANAGER_CONTAINER" cat /data/security/api_key.txt 2>/dev/null)
+    [ -n "$key" ] || return 1
+    docker exec "$LC_CONTAINER" curl -s -m 6 -c "$JAR" -X POST \
+        "$LC_MANAGER_URL/api/auth/login" -H 'Content-Type: application/json' \
+        --data-binary "{\"apiKey\":\"$key\"}" >/dev/null 2>&1
+}
+sample_cache() {
+    [ -n "$LC_MANAGER_URL" ] || return 0
+    now=$(date +%s)
+    cache=$(lm_curl /api/cache)
+    case "$cache" in
+        '{'*) : ;;
+        *) lm_login; cache=$(lm_curl /api/cache) ;;
+    esac
+    # raw rows are per-session; the page groups them per game+client (the
+    # manager's own UI does the same), so fetch enough to fill ~10 groups
+    downloads=$(lm_curl "/api/downloads/latest?count=40")
+    case "$cache" in '{'*) : ;; *) cache='null' ;; esac
+    case "$downloads" in '['*) : ;; *) downloads='[]' ;; esac
+    printf '{"ts":%s,"cache":%s,"downloads":%s}\n' "$now" "$cache" "$downloads" \
+        > "$STATE/cache.json.tmp" && mv "$STATE/cache.json.tmp" "$STATE/cache.json"
+}
+
+# --------------------------------------------------------------- wifi.json
+# UniFi controller stats (per-AP airtime, wireless clients, PoE). Raw dumps
+# hold device secrets -> /tmp/luxe-raw (not served); luxe-wifi.uc (ucode)
+# shapes them into the public wifi.json.
+UF_JAR=/tmp/luxe-uf.cookie   # inside the unifi container
+uf_curl() {
+    docker exec "$UNIFI_CONTAINER" curl -sk -m 6 -b "$UF_JAR" \
+        "$UNIFI_URL$1" 2>/dev/null
+}
+uf_login() {
+    docker exec "$UNIFI_CONTAINER" curl -sk -m 6 -c "$UF_JAR" -X POST \
+        "$UNIFI_URL/api/login" -H 'Content-Type: application/json' \
+        --data-binary "{\"username\":\"$UNIFI_USER\",\"password\":\"$UNIFI_PASS\"}" >/dev/null 2>&1
+}
+sample_wifi() {
+    [ -n "$UNIFI_PASS" ] || return 0
+    uf_curl /api/s/default/stat/device > /tmp/luxe-raw/uf-dev.json.tmp
+    # Stale cookie returns rc:ok with an EMPTY device list (CLAUDE.md gotcha) —
+    # no '"type"' key means nothing real came back: log in again, retry once.
+    if ! grep -q '"type"' /tmp/luxe-raw/uf-dev.json.tmp; then
+        uf_login
+        uf_curl /api/s/default/stat/device > /tmp/luxe-raw/uf-dev.json.tmp
+    fi
+    mv /tmp/luxe-raw/uf-dev.json.tmp /tmp/luxe-raw/uf-dev.json
+    uf_curl /api/s/default/stat/sta > /tmp/luxe-raw/uf-sta.json.tmp
+    mv /tmp/luxe-raw/uf-sta.json.tmp /tmp/luxe-raw/uf-sta.json
+    ucode /usr/bin/luxe-wifi.uc > "$STATE/wifi.json.tmp" 2>/dev/null \
+        && mv "$STATE/wifi.json.tmp" "$STATE/wifi.json"
+    sample_topo
+}
+
+# --------------------------------------------------------------- topo.json
+# Topology tree: router bridge FDB (per bridge leg) + MikroTik host table +
+# the UniFi dumps sample_wifi just fetched. luxe-topo.uc merges; router MACs
+# and bridge legs are DETECTED at runtime, never configured.
+sample_topo() {
+    # every bridge member port, with its FDB entries -> "iface mac" lines
+    : > /tmp/luxe-raw/fdb.txt.tmp
+    ROUTER_MACS=$(cat /sys/class/net/br-lan/address)
+    LEG_SPEEDS=""
+    for brif in /sys/class/net/br-lan/brif/*; do
+        ifn=${brif##*/}
+        pn=$(( $(cat "$brif/port_no") ))
+        ROUTER_MACS="$ROUTER_MACS $(cat /sys/class/net/$ifn/address)"
+        LEG_SPEEDS="$LEG_SPEEDS $ifn:$(cat /sys/class/net/$ifn/speed 2>/dev/null || echo -1)"
+        brctl showmacs br-lan 2>/dev/null | awk -v p="$pn" -v ifn="$ifn" '
+            NR > 1 && $3 == "no" && $1 == p { print ifn, $2 }' >> /tmp/luxe-raw/fdb.txt.tmp
+    done
+    mv /tmp/luxe-raw/fdb.txt.tmp /tmp/luxe-raw/fdb.txt
+    if [ -n "$MT_HOST" ]; then
+        mt_get "/rest/interface/bridge/host?.proplist=mac-address,on-interface" \
+            > /tmp/luxe-raw/mt-hosts.json.tmp \
+            && mv /tmp/luxe-raw/mt-hosts.json.tmp /tmp/luxe-raw/mt-hosts.json
+    fi
+    ROUTER_MACS="$ROUTER_MACS" LEG_SPEEDS="$LEG_SPEEDS" \
+    SWITCH_LABELS_JSON="$SWITCH_LABELS_JSON" \
+    CASCADES_JSON="$CASCADES_JSON" CRS_SELF_PREFIX="$CRS_SELF_PREFIX" \
+    ucode /usr/bin/luxe-topo.uc > "$STATE/topo.json.tmp" 2>/tmp/luxe-raw/topo.err \
+        && mv "$STATE/topo.json.tmp" "$STATE/topo.json"
+}
+
+# --------------------------------------------------------------- gear.json
+# Network-gear temps: R86S SFP+ module (ethtool -m DDM) + Mellanox NIC ASIC
+# (hwmon) + MikroTik CRS305 CPU/SFP temps via its REST API (v7, port 80,
+# the party credentials). Transport notes, all verified 2026-07-14:
+#  - docker containers can't reach LAN hosts (fw4 forwards docker->wan only),
+#    so no curl-in-container here — everything runs on the host;
+#  - busybox wget GET with URL creds works, but its POST hardwires
+#    Content-Type: x-www-form-urlencoded (RouterOS answers 415, and adding
+#    the header makes a duplicate -> 400), so POST is a raw nc request; the
+#    held-open stdin (sleep) is required or nc hangs up before the response.
+# busybox has no base64; ucode does
+MT_B64=$(ucode -e "print(b64enc('$MT_USER:$MT_PASS'));" 2>/dev/null)
+mt_get() {
+    [ -n "$MT_HOST" ] || return 1
+    wget -q -O - -T 6 "http://$MT_USER:$MT_PASS@$MT_HOST$1" 2>/dev/null
+}
+mt_post() {
+    [ -n "$MT_HOST" ] || return 1
+    { printf 'POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: Basic %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
+        "$1" "$MT_HOST" "$MT_B64" "${#2}" "$2"
+      /bin/sleep 4
+    } | nc "$MT_HOST" 80 2>/dev/null | sed -n '/^\[/,$p'
+}
+sample_gear() {
+    sfp_c=""
+    [ -n "$SFP_IF" ] && sfp_c=$(ethtool -m "$SFP_IF" 2>/dev/null \
+        | sed -n 's/.*Module temperature *: *\([0-9.]*\) degrees C.*/\1/p' | head -1)
+    nic_c=0
+    for t in $MLX_TEMPS; do
+        v=$(( $(cat "$t" 2>/dev/null || echo 0) / 1000 ))
+        [ "$v" -gt "$nic_c" ] && nic_c=$v
+    done
+    mt_get /rest/system/health > /tmp/luxe-raw/mt-health.json.tmp \
+        && mv /tmp/luxe-raw/mt-health.json.tmp /tmp/luxe-raw/mt-health.json
+    mt_post /rest/interface/ethernet/monitor \
+        '{"numbers":"sfp-sfpplus1,sfp-sfpplus2,sfp-sfpplus3,sfp-sfpplus4","once":true,".proplist":"name,sfp-temperature"}' \
+        > /tmp/luxe-raw/mt-mon.json.tmp \
+        && mv /tmp/luxe-raw/mt-mon.json.tmp /tmp/luxe-raw/mt-mon.json
+    SFP_C="${sfp_c:-0}" NIC_C="$nic_c" ucode /usr/bin/luxe-gear.uc \
+        > "$STATE/gear.json.tmp" 2>/dev/null \
+        && mv "$STATE/gear.json.tmp" "$STATE/gear.json"
+}
+
+# -------------------------------------------------------------------- main
+mkdir -p /tmp/luxe-raw
+i=0
+while :; do
+    sample_net
+    sample_sys
+    if [ $((i % CACHE_EVERY)) -eq 2 ]; then
+        [ -n "$(find "$STATE/wifi.lock" -mmin +2 2>/dev/null)" ] && rm -f "$STATE/wifi.lock"
+        if ! [ -f "$STATE/wifi.lock" ]; then
+            ( touch "$STATE/wifi.lock"; sample_wifi; rm -f "$STATE/wifi.lock" ) &
+        fi
+    fi
+    if [ $((i % CACHE_EVERY)) -eq 4 ]; then
+        [ -n "$(find "$STATE/gear.lock" -mmin +2 2>/dev/null)" ] && rm -f "$STATE/gear.lock"
+        if ! [ -f "$STATE/gear.lock" ]; then
+            ( touch "$STATE/gear.lock"; sample_gear; rm -f "$STATE/gear.lock" ) &
+        fi
+    fi
+    if [ $((i % CACHE_EVERY)) -eq 0 ]; then
+        # clear a stale lock (hung docker exec — there is no `timeout` applet)
+        [ -n "$(find "$STATE/cache.lock" -mmin +2 2>/dev/null)" ] && rm -f "$STATE/cache.lock"
+        if ! [ -f "$STATE/cache.lock" ]; then
+            ( touch "$STATE/cache.lock"; sample_cache; rm -f "$STATE/cache.lock" ) &
+        fi
+    fi
+    i=$((i + 1))
+    sleep $INTERVAL
+done

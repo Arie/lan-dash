@@ -1,0 +1,61 @@
+# LuxeLAN dashboard configuration — EXAMPLE.
+#
+#   cp config.sh.example config.local.sh     # config.local.sh is gitignored
+#   $EDITOR config.local.sh                  # fill in your values
+#   ./deploy.sh                              # pushes it to /etc/luxe/config.sh
+#
+# The daemons source /etc/luxe/config.sh at startup and fall back to safe
+# defaults when a value is missing — samplers whose credentials are absent
+# (UniFi, MikroTik, lancache) simply publish nothing instead of failing.
+
+# ---- deploy-time (used by setup.sh + deploy.sh only) -----------------------
+ROUTER=root@192.168.1.1            # ssh target for the OpenWrt router
+ALIAS_IP=192.168.1.211             # LAN IP alias the dashboard is served on
+WEB_ROOT=/mnt/nvme0n1p1/luxe/www   # web root on the router (survives sysupgrade)
+
+# ---- DNS names for the dashboard (optional, used by setup.sh) --------------
+DASH_NAMES="lan lan.mynet"         # names pointed at ALIAS_IP
+# With AdGuard Home, setup.sh adds rewrites via its API (instant, no DNS
+# restart). Leave ADGUARD_URL empty to fall back to dnsmasq address records
+# (those need a dnsmasq restart to apply).
+ADGUARD_URL=                       # e.g. http://192.168.1.1:8081
+ADGUARD_USER=admin
+ADGUARD_PASS=
+
+# ---- network shape ---------------------------------------------------------
+WAN_IF=eth1                        # the REAL uplink device (check the default route!)
+WAN_DOWN_MAX=1000000000            # WAN gauge full-scale, bits/sec
+WAN_UP_MAX=1000000000
+LAN_PREFIX=192.168.1.              # clients live in this /24 ...
+LAN_CLIENT_MIN=11                  # ... with last octet >= this (below = router IPs)
+SFP_IF=                            # iface with an SFP+ module for temp (empty = skip)
+NVME_MOUNT=/                       # filesystem shown as "disk" in Router health
+
+# ---- ping graph ------------------------------------------------------------
+PING_TARGET=1.1.1.1
+
+# ---- lancache (docker, optional) -------------------------------------------
+LC_CONTAINER=lancache              # container with curl that can reach the manager
+LC_MANAGER_CONTAINER=lancache-manager
+LC_MANAGER_URL=http://192.168.1.2  # lancache-manager, reachable from LC_CONTAINER
+
+# ---- UniFi controller (docker, optional) -----------------------------------
+UNIFI_CONTAINER=unifi-network-application
+UNIFI_URL=https://localhost:8443   # as seen from inside UNIFI_CONTAINER
+UNIFI_USER=admin
+UNIFI_PASS=changeme
+
+# ---- MikroTik core switch (REST API v7, optional) --------------------------
+MT_HOST=                           # empty = skip MikroTik temps + host table
+MT_USER=admin
+MT_PASS=changeme
+
+# ---- topology annotations (optional, cosmetic) -----------------------------
+# Unmanaged switches are invisible at L2; these curated labels name known
+# MAC clusters. Keys: "crs:<mikrotik-port>" or "usw:<unifi-port-number>".
+SWITCH_LABELS_JSON='{}'
+# Known switch-behind-switch cascades: same key format, value = the label of
+# the second switch. One L2 segment — devices can't be attributed to either.
+CASCADES_JSON='{}'
+# The MikroTik's own port MACs share this prefix (filtered from host lists).
+CRS_SELF_PREFIX=

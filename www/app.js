@@ -276,6 +276,18 @@ function renderWifi(d) {
     `${d.sw.name}: ${d.sw.poe_w.toFixed(1)} W of PoE feeding ${d.sw.poe_ports} device${d.sw.poe_ports === 1 ? "" : "s"} (the APs)`;
   $("wifi-counts").textContent = `${d.counts.wireless} devices`;
 
+  // wifi card: live radio summary (channels per band, AP + client counts)
+  {
+    const chans = { "2.4": [], "5": [] };
+    for (const ap of d.aps || [])
+      for (const r of ap.radios || []) (chans[r.band] || []).push(r.ch);
+    const parts = [];
+    if (chans["2.4"].length) parts.push(`2.4 GHz ch ${chans["2.4"].join("/")}`);
+    if (chans["5"].length) parts.push(`5 GHz ch ${chans["5"].join("/")}`);
+    $("wifi-radios").textContent =
+      `${(d.aps || []).length} APs · ${parts.join(" · ")} · ${d.counts.wireless} clients on`;
+  }
+
   const box = $("wifi-clients");
   box.textContent = "";
   if (!(d.clients || []).length) { box.append(el("p", "empty", "nobody on Wi-Fi")); return; }
@@ -350,6 +362,20 @@ function renderCache(d) {
     $("cache-used").textContent =
       `${fmtBytes(c.usedCacheSize)} of ${fmtBytes(c.totalCacheSize)} (${c.usagePercent.toFixed(0)}%) — full is fine, old games make room`;
     $("cache-bar").style.width = c.usagePercent.toFixed(0) + "%";
+  }
+  // recent activity across the latest download sessions
+  {
+    let hit = 0, miss = 0, active = 0;
+    for (const dl of d.downloads || []) {
+      hit += dl.cacheHitBytes || 0;
+      miss += dl.cacheMissBytes || 0;
+      if (dl.isActive) active++;
+    }
+    const total = hit + miss;
+    $("cache-recent").textContent = total
+      ? `${fmtBytes(total)} served · ${((100 * hit) / total).toFixed(0)}% from cache` +
+        (active ? ` · ${active} active now` : "")
+      : "—";
   }
   const box = $("downloads");
   box.textContent = "";
